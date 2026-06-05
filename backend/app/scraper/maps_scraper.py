@@ -208,7 +208,7 @@ async def _run_playwright_scrape(search_query: str, min_rating: float, min_revie
                     for btn in buttons:
                         text = await btn.inner_text()
                         if "Accept all" in text or "Agree" in text or "Accept" in text or "I agree" in text:
-                            await btn.click()
+                            await btn.click(timeout=5000)
                             await page.wait_for_load_state("networkidle", timeout=5000)
                             break
             except Exception as ce:
@@ -322,8 +322,14 @@ async def _run_playwright_scrape(search_query: str, min_rating: float, min_revie
                     card_link_el = await card.query_selector('a.hfpxzc')
                     if card_link_el:
                         try:
-                            # Force click to avoid overlay interception issues
-                            await card_link_el.click(force=True)
+                            # Ensure the element is scrolled into view
+                            await card_link_el.scroll_into_view_if_needed()
+                            try:
+                                # Force click with a short timeout to avoid 30s hangs
+                                await card_link_el.click(force=True, timeout=3000)
+                            except Exception as click_err:
+                                logger.info(f"Playwright standard click failed or timed out for {name}, trying JS click fallback: {click_err}")
+                                await page.evaluate("el => el.click()", card_link_el)
                             
                             # Smart wait: wait for the detail panel title to update to the clicked business name
                             loaded = False
