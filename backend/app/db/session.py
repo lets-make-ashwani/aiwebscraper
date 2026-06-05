@@ -41,7 +41,11 @@ safe_url = make_mongo_url_safe(mongo_url)
 
 # Create connection client
 client = MongoClient(safe_url)
-db = client.get_database() # Gets database from URI path, or fallback to default 'leadforge'
+try:
+    db = client.get_database() # Gets database from URI path
+except Exception:
+    db = client.get_database("leadforge") # fallback to default 'leadforge'
+
 
 
 # Initialize MongoDB Indexes
