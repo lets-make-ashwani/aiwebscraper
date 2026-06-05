@@ -5,10 +5,8 @@ import re
 import json
 import random
 from bs4 import BeautifulSoup
-from sqlalchemy.orm import Session
 from datetime import datetime
 
-from backend.app.db.models import Lead, WebsiteAudit
 from backend.app.services.ai_service import generate_ai_analysis_and_score
 
 logging.basicConfig(level=logging.INFO)
@@ -67,41 +65,48 @@ def get_simulated_audit(lead_name: str, url: str) -> dict:
     }
 
 async def _run_website_audit_internal(lead_id: int, db_session_maker):
-    db: Session = db_session_maker()
-    lead = db.query(Lead).filter(Lead.id == lead_id).first()
-    if not lead:
+    db = db_session_maker()
+    lead_data = db.leads.find_one({"_id": lead_id})
+    if not lead_data:
         logger.error(f"Lead {lead_id} not found.")
-        db.close()
         return
 
-    lead.audit_status = "auditing"
-    db.commit()
+    db.leads.update_one(
+        {"_id": lead_id},
+        {"$set": {"audit_status": "auditing"}}
+    )
 
-    url = lead.website
-    logger.info(f"Auditing Lead: {lead.name} (URL: {url})")
+    url = lead_data.get("website")
+    logger.info(f"Auditing Lead: {lead_data.get('name')} (URL: {url})")
 
     # If no website, we skip crawling and create an empty audit
     if not url:
-        logger.info(f"Lead {lead.name} has no website. Scoring direct.")
-        lead.website_type = "no_website"
-        audit = WebsiteAudit(
-            lead_id=lead_id,
-            is_mobile_responsive=False,
-            has_ssl=False,
-            has_contact_form=False,
-            has_cta=False,
-            seo_title=None,
-            seo_description=None,
-            missing_seo=True,
-            page_speed_score=0,
-            has_accessibility_basics=False,
-            social_media_links=json.dumps([]),
-            has_booking_system=False,
-            audit_report="This business does not have a website. Immediate opportunities include domain registration, website design, hosting, local SEO setups, and booking channel integrations."
+        logger.info(f"Lead {lead_data.get('name')} has no website. Scoring direct.")
+        audit_dict = {
+            "id": lead_id,
+            "lead_id": lead_id,
+            "is_mobile_responsive": False,
+            "has_ssl": False,
+            "has_contact_form": False,
+            "has_cta": False,
+            "seo_title": None,
+            "seo_description": None,
+            "missing_seo": True,
+            "page_speed_score": 0,
+            "has_accessibility_basics": False,
+            "social_media_links": json.dumps([]),
+            "has_booking_system": False,
+            "audit_report": "This business does not have a website. Immediate opportunities include domain registration, website design, hosting, local SEO setups, and booking channel integrations.",
+            "created_at": datetime.utcnow()
+        }
+        db.leads.update_one(
+            {"_id": lead_id},
+            {"$set": {
+                "website_type": "no_website",
+                "audit": audit_dict,
+                "audit_status": "audited"
+            }}
         )
-        db.add(audit)
-        lead.audit_status = "audited"
-        db.commit()
         
         # Trigger Groq scoring & text generation
         try:
@@ -109,7 +114,6 @@ async def _run_website_audit_internal(lead_id: int, db_session_maker):
         except Exception as e:
             logger.error(f"Error generating AI details for Lead {lead_id}: {e}")
             
-        db.close()
         return
 
     # Clean URL format
@@ -237,26 +241,33 @@ async def _run_website_audit_internal(lead_id: int, db_session_maker):
 
     # If the crawl failed/timed out, we generate simulated results to keep testing productive
     if not crawled_successfully:
-        audit_results = get_simulated_audit(lead.name, url)
+        audit_results = get_simulated_audit(lead_data.get("name"), url)
 
-    # Save audit record
-    audit = WebsiteAudit(
-        lead_id=lead_id,
-        is_mobile_responsive=audit_results["is_mobile_responsive"],
-        has_ssl=audit_results["has_ssl"],
-        has_contact_form=audit_results["has_contact_form"],
-        has_cta=audit_results["has_cta"],
-        seo_title=audit_results["seo_title"],
-        seo_description=audit_results["seo_description"],
-        missing_seo=audit_results["missing_seo"],
-        page_speed_score=audit_results["page_speed_score"],
-        has_accessibility_basics=audit_results["has_accessibility_basics"],
-        social_media_links=audit_results["social_media_links"],
-        has_booking_system=audit_results["has_booking_system"]
+    # Save audit record embedded inside the lead document
+    audit_dict = {
+        "id": lead_id,
+        "lead_id": lead_id,
+        "is_mobile_responsive": audit_results["is_mobile_responsive"],
+        "has_ssl": audit_results["has_ssl"],
+        "has_contact_form": audit_results["has_contact_form"],
+        "has_cta": audit_results["has_cta"],
+        "seo_title": audit_results["seo_title"],
+        "seo_description": audit_results["seo_description"],
+        "missing_seo": audit_results["missing_seo"],
+        "page_speed_score": audit_results["page_speed_score"],
+        "has_accessibility_basics": audit_results["has_accessibility_basics"],
+        "social_media_links": audit_results["social_media_links"],
+        "has_booking_system": audit_results["has_booking_system"],
+        "created_at": datetime.utcnow()
+    }
+    
+    db.leads.update_one(
+        {"_id": lead_id},
+        {"$set": {
+            "audit": audit_dict,
+            "audit_status": "audited"
+        }}
     )
-    db.add(audit)
-    lead.audit_status = "audited"
-    db.commit()
 
     # Trigger Groq scoring and analytics updates
     try:
@@ -264,11 +275,10 @@ async def _run_website_audit_internal(lead_id: int, db_session_maker):
     except Exception as e:
         logger.error(f"Error compiling AI metrics for Lead {lead_id}: {e}")
 
-    db.close()
     logger.info(f"Completed audit for Lead {lead_id}!")
-
 
 async def run_website_audit(lead_id: int, db_session_maker):
     """Wrapper that runs the website audit through a concurrency semaphore to prevent database lock contention."""
     async with audit_semaphore:
         await _run_website_audit_internal(lead_id, db_session_maker)
+

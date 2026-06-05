@@ -1,15 +1,13 @@
 import io
 import csv
-import json
 import pandas as pd
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
-from sqlalchemy.orm import Session
 from fpdf import FPDF
 from typing import Optional
 
 from backend.app.db.session import get_db
-from backend.app.db.models import Lead, SearchHistory, WebsiteAudit, User
+from backend.app.db.models import Lead, User
 from backend.app.routes.auth import get_current_user
 
 router = APIRouter(prefix="/export", tags=["export"])
@@ -28,13 +26,23 @@ def clean_string_for_pdf(text: str) -> str:
 def export_leads_csv(
     search_history_id: Optional[int] = None,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db = Depends(get_db)
 ):
-    query = db.query(Lead).join(SearchHistory).filter(SearchHistory.user_id == current_user.id)
-    if search_history_id:
-        query = query.filter(Lead.search_history_id == search_history_id)
-    
-    leads = query.all()
+    # Get user search history ids
+    histories = list(db.search_histories.find({"user_id": current_user.id}))
+    history_ids = [h["_id"] for h in histories]
+
+    if not history_ids:
+        leads = []
+    else:
+        filters = {"search_history_id": {"$in": history_ids}}
+        if search_history_id is not None:
+            if search_history_id not in history_ids:
+                return StreamingResponse(io.BytesIO(b""), media_type="text/csv")
+            filters["search_history_id"] = search_history_id
+        
+        leads_cursor = db.leads.find(filters)
+        leads = [Lead(l) for l in leads_cursor]
     
     output = io.StringIO()
     writer = csv.writer(output)
@@ -47,11 +55,12 @@ def export_leads_csv(
     ])
     
     for l in leads:
+        created_at_str = l.created_at.strftime("%Y-%m-%d") if isinstance(l.created_at, datetime) else str(l.created_at)[:10]
         writer.writerow([
             l.id, l.name, l.phone or "", l.website or "", l.address or "",
             l.rating or 0.0, l.reviews_count or 0, l.category or "",
             l.website_type, l.lead_score or "", l.lead_score_category or "",
-            l.status, l.notes or "", l.tags or "", l.created_at.strftime("%Y-%m-%d")
+            l.status, l.notes or "", l.tags or "", created_at_str
         ])
         
     output.seek(0)
@@ -63,16 +72,27 @@ def export_leads_csv(
 def export_leads_excel(
     search_history_id: Optional[int] = None,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db = Depends(get_db)
 ):
-    query = db.query(Lead).join(SearchHistory).filter(SearchHistory.user_id == current_user.id)
-    if search_history_id:
-        query = query.filter(Lead.search_history_id == search_history_id)
-        
-    leads = query.all()
+    # Get user search history ids
+    histories = list(db.search_histories.find({"user_id": current_user.id}))
+    history_ids = [h["_id"] for h in histories]
+
+    if not history_ids:
+        leads = []
+    else:
+        filters = {"search_history_id": {"$in": history_ids}}
+        if search_history_id is not None:
+            if search_history_id not in history_ids:
+                return StreamingResponse(io.BytesIO(b""), media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+            filters["search_history_id"] = search_history_id
+            
+        leads_cursor = db.leads.find(filters)
+        leads = [Lead(l) for l in leads_cursor]
     
     data = []
     for l in leads:
+        created_at_str = l.created_at.strftime("%Y-%m-%d") if hasattr(l.created_at, "strftime") else str(l.created_at)[:10]
         data.append({
             "ID": l.id,
             "Name": l.name,
@@ -88,7 +108,7 @@ def export_leads_excel(
             "CRM Status": l.status,
             "Notes": l.notes or "",
             "Tags": l.tags or "",
-            "Created At": l.created_at.strftime("%Y-%m-%d")
+            "Created At": created_at_str
         })
         
     df = pd.DataFrame(data)
@@ -110,17 +130,19 @@ def export_leads_excel(
 def export_lead_pdf(
     lead_id: int,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db = Depends(get_db)
 ):
-    lead = db.query(Lead).join(SearchHistory).filter(
-        Lead.id == lead_id,
-        SearchHistory.user_id == current_user.id
-    ).first()
-    
-    if not lead:
+    lead_data = db.leads.find_one({"_id": lead_id})
+    if not lead_data:
         raise HTTPException(status_code=404, detail="Lead not found")
         
-    audit = db.query(WebsiteAudit).filter(WebsiteAudit.lead_id == lead_id).first()
+    history = db.search_histories.find_one({"_id": lead_data["search_history_id"], "user_id": current_user.id})
+    if not history:
+        raise HTTPException(status_code=403, detail="Not authorized to access this lead")
+        
+    lead = Lead(lead_data)
+    # The WebsiteAudit document is stored directly inside the Lead document under the "audit" key!
+    audit = lead.audit
     
     pdf = FPDF()
     pdf.add_page()
@@ -167,7 +189,7 @@ def export_lead_pdf(
         pdf.set_font("helvetica", "B", 10)
         pdf.cell(45, 6, clean_string_for_pdf(label))
         pdf.set_font("helvetica", "", 10)
-        pdf.cell(0, 6, clean_string_for_pdf(val), new_x="LMARGIN", new_y="NEXT")
+        pdf.cell(0, 6, clean_string_for_pdf(str(val)), new_x="LMARGIN", new_y="NEXT")
         
     pdf.ln(8)
     
@@ -251,3 +273,4 @@ def export_lead_pdf(
         media_type="application/pdf",
         headers=headers
     )
+

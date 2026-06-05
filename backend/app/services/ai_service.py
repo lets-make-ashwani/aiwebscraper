@@ -1,21 +1,22 @@
 import httpx
 import logging
 import json
-from sqlalchemy.orm import Session
+from datetime import datetime
 from backend.app.config import settings
-from backend.app.db.models import Lead, WebsiteAudit, Proposal, Outreach, User, SearchHistory
+from backend.app.db.models import Lead, WebsiteAudit, Proposal, Outreach
+from backend.app.db.session import get_next_sequence_value
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("AIService")
 
-def get_groq_key_for_lead(db: Session, lead: Lead) -> str:
+def get_groq_key_for_lead(db, lead: Lead) -> str:
     """Resolves the Groq API Key, checking user's custom settings first, then falling back to env."""
     try:
-        search = db.query(SearchHistory).filter(SearchHistory.id == lead.search_history_id).first()
+        search = db.search_histories.find_one({"_id": lead.search_history_id})
         if search:
-            user = db.query(User).filter(User.id == search.user_id).first()
-            if user and user.groq_api_key:
-                return user.groq_api_key
+            user = db.users.find_one({"_id": search.get("user_id")})
+            if user and user.get("groq_api_key"):
+                return user["groq_api_key"]
     except Exception as e:
         logger.warning(f"Failed to fetch custom user Groq key: {e}")
     return settings.GROQ_API_KEY
@@ -127,13 +128,13 @@ def generate_offline_outreach(lead_name: str, category: str) -> dict:
 
 async def generate_ai_analysis_and_score(lead_id: int, db_session_maker):
     """Calculates audit metrics and builds custom business analyses and scoring categories using Groq."""
-    db: Session = db_session_maker()
-    lead = db.query(Lead).filter(Lead.id == lead_id).first()
-    if not lead:
-        db.close()
+    db = db_session_maker()
+    lead_data = db.leads.find_one({"_id": lead_id})
+    if not lead_data:
         return
 
-    audit = db.query(WebsiteAudit).filter(WebsiteAudit.lead_id == lead_id).first()
+    lead = Lead(lead_data)
+    audit = lead.audit
     api_key = get_groq_key_for_lead(db, lead)
 
     # 1. Programmatic Scoring Logic
@@ -183,17 +184,25 @@ async def generate_ai_analysis_and_score(lead_id: int, db_session_maker):
 
     # Ensure score falls within 10-100 range
     score = max(10, min(100, score))
-    lead.lead_score = score
 
     # Classify Lead Priority
     if score >= 90:
-        lead.lead_score_category = "Hot"
+        lead_score_category = "Hot"
     elif score >= 70:
-        lead.lead_score_category = "Warm"
+        lead_score_category = "Warm"
     elif score >= 50:
-        lead.lead_score_category = "Medium"
+        lead_score_category = "Medium"
     else:
-        lead.lead_score_category = "Low Priority"
+        lead_score_category = "Low Priority"
+
+    # Save initial programmatic score
+    db.leads.update_one(
+        {"_id": lead_id},
+        {"$set": {
+            "lead_score": score,
+            "lead_score_category": lead_score_category
+        }}
+    )
 
     # 2. Call Groq for Business Analysis
     system_prompt = "You are a professional local business growth consultant and website audit expert. Generate concise, actionable reports."
@@ -235,8 +244,13 @@ Provide a concise response strictly in markdown with these exact headings:
             lead.name, lead.category, score, lead.website_type != "no_website"
         )
 
-    if audit:
-        audit.audit_report = analysis_report
+    # Update the embedded audit report inside the lead document
+    db.leads.update_one(
+        {"_id": lead_id},
+        {"$set": {
+            "audit.audit_report": analysis_report
+        }}
+    )
 
     # 3. Pre-generate Default Proposal and Outreach
     # Generate outreach templates
@@ -261,7 +275,6 @@ Ensure the JSON is valid. Do not wrap the JSON in markdown code blocks.
     try:
         outreach_json = await call_groq_llm(api_key, outreach_system, outreach_user)
         # Parse json
-        # Clean potential markdown wraps
         cleaned_json = outreach_json.strip()
         if cleaned_json.startswith("```json"):
             cleaned_json = cleaned_json[7:]
@@ -271,20 +284,24 @@ Ensure the JSON is valid. Do not wrap the JSON in markdown code blocks.
     except Exception:
         outreach_texts = generate_offline_outreach(lead.name, lead.category)
 
-    # Save Outreach
-    existing_outreach = db.query(Outreach).filter(Outreach.lead_id == lead.id).first()
-    if existing_outreach:
-        db.delete(existing_outreach)
-        
-    outreach_obj = Outreach(
-        lead_id=lead.id,
-        email_text=outreach_texts.get("email"),
-        linkedin_text=outreach_texts.get("linkedin"),
-        whatsapp_text=outreach_texts.get("whatsapp"),
-        cold_dm_text=outreach_texts.get("dm"),
-        cold_call_script=outreach_texts.get("call_script")
+    # Save Outreach embedded subdocument in Lead document
+    outreach_dict = {
+        "id": lead_id,
+        "lead_id": lead_id,
+        "email_text": outreach_texts.get("email"),
+        "linkedin_text": outreach_texts.get("linkedin"),
+        "whatsapp_text": outreach_texts.get("whatsapp"),
+        "cold_dm_text": outreach_texts.get("dm"),
+        "cold_call_script": outreach_texts.get("call_script"),
+        "created_at": datetime.utcnow()
+    }
+    
+    db.leads.update_one(
+        {"_id": lead_id},
+        {"$set": {
+            "outreach": outreach_dict
+        }}
     )
-    db.add(outreach_obj)
 
     # Pre-generate Short Proposal
     proposal_system = "You are a professional B2B agency sales representative writing persuasive client proposals."
@@ -300,39 +317,36 @@ Generate a short 1-page proposal. Include project scope, goals, and pricing stru
     except Exception:
         proposal_text = generate_offline_proposal(lead.name, lead.category, "short")
 
-    existing_proposal = db.query(Proposal).filter(
-        Proposal.lead_id == lead.id,
-        Proposal.format == "short"
-    ).first()
-    if existing_proposal:
-        db.delete(existing_proposal)
+    db.proposals.delete_many({
+        "lead_id": lead_id,
+        "format": "short"
+    })
 
-    proposal_obj = Proposal(
-        lead_id=lead.id,
-        format="short",
-        proposal_text=proposal_text
-    )
-    db.add(proposal_obj)
+    new_prop_id = get_next_sequence_value(db, "proposals")
+    db.proposals.insert_one({
+        "_id": new_prop_id,
+        "lead_id": lead_id,
+        "format": "short",
+        "proposal_text": proposal_text,
+        "created_at": datetime.utcnow()
+    })
 
-    db.commit()
-    db.close()
-
-async def generate_specific_proposal(lead_id: int, format_type: str, db: Session) -> str:
+async def generate_specific_proposal(lead_id: int, format_type: str, db) -> str:
     """Generates on-demand custom proposals based on formats: short, detailed, freelance, agency."""
-    lead = db.query(Lead).filter(Lead.id == lead_id).first()
-    if not lead:
+    lead_data = db.leads.find_one({"_id": lead_id})
+    if not lead_data:
         return "Lead not found"
+    lead = Lead(lead_data)
 
     # Check if already generated
-    existing = db.query(Proposal).filter(
-        Proposal.lead_id == lead_id,
-        Proposal.format == format_type
-    ).first()
+    existing = db.proposals.find_one({
+        "lead_id": lead_id,
+        "format": format_type
+    })
     if existing:
-        return existing.proposal_text
+        return existing["proposal_text"]
 
     api_key = get_groq_key_for_lead(db, lead)
-    audit = db.query(WebsiteAudit).filter(WebsiteAudit.lead_id == lead_id).first()
     
     system_prompt = f"You are an expert sales writer. Generate a comprehensive {format_type} B2B proposal in markdown."
     user_prompt = f"""
@@ -356,11 +370,13 @@ Ensure the proposal is detailed, beautifully formatted in markdown, and customiz
     except Exception:
         proposal_text = generate_offline_proposal(lead.name, lead.category, format_type)
 
-    new_prop = Proposal(
-        lead_id=lead_id,
-        format=format_type,
-        proposal_text=proposal_text
-    )
-    db.add(new_prop)
-    db.commit()
+    new_prop_id = get_next_sequence_value(db, "proposals")
+    db.proposals.insert_one({
+        "_id": new_prop_id,
+        "lead_id": lead_id,
+        "format": format_type,
+        "proposal_text": proposal_text,
+        "created_at": datetime.utcnow()
+    })
     return proposal_text
+

@@ -1,8 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.orm import Session
 import httpx
 from pydantic import BaseModel
-
+from datetime import datetime
 from backend.app.db.session import get_db
 from backend.app.db.models import User
 from backend.app.db.schemas import UserResponse
@@ -47,10 +46,17 @@ async def validate_groq_api_key(
 def update_branding_profile(
     req: BrandingUpdateRequest,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db = Depends(get_db)
 ):
-    current_user.company_name = req.company_name
-    current_user.company_branding = req.company_branding
-    db.commit()
-    db.refresh(current_user)
-    return current_user
+    db.users.update_one(
+        {"_id": current_user.id},
+        {
+            "$set": {
+                "company_name": req.company_name,
+                "company_branding": req.company_branding,
+                "updated_at": datetime.utcnow()
+            }
+        }
+    )
+    user_data = db.users.find_one({"_id": current_user.id})
+    return User(user_data)

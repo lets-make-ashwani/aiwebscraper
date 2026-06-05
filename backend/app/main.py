@@ -9,11 +9,8 @@ from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 
 from backend.app.config import settings
-from backend.app.db.session import engine, Base
+# Database session initialization is handled directly inside session.py via PyMongo client
 from backend.app.routes import auth, leads, dashboard, export, settings as settings_route
-
-# Auto create database tables on startup (perfect for zero-config sqlite deployment)
-Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
     title="LeadForge AI API",

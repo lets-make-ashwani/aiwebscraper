@@ -1,13 +1,12 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 from jose import JWTError, jwt
 import bcrypt
 from typing import Optional
 
 from backend.app.config import settings
-from backend.app.db.session import get_db
+from backend.app.db.session import get_db, get_next_sequence_value
 from backend.app.db.models import User
 from backend.app.db.schemas import UserCreate, UserResponse, UserSettingsUpdate, Token
 
@@ -34,7 +33,7 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None):
     encoded_jwt = jwt.encode(to_encode, settings.JWT_SECRET, algorithm=settings.JWT_ALGORITHM)
     return encoded_jwt
 
-def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+def get_current_user(token: str = Depends(oauth2_scheme), db = Depends(get_db)):
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Could not validate credentials",
@@ -48,44 +47,45 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     except JWTError:
         raise credentials_exception
         
-    user = db.query(User).filter(User.email == email).first()
-    if user is None:
+    user_data = db.users.find_one({"email": email})
+    if user_data is None:
         raise credentials_exception
-    return user
+    return User(user_data)
 
 @router.post("/register", response_model=UserResponse)
-def register(user_in: UserCreate, db: Session = Depends(get_db)):
-    db_user = db.query(User).filter(User.email == user_in.email).first()
+def register(user_in: UserCreate, db = Depends(get_db)):
+    db_user = db.users.find_one({"email": user_in.email})
     if db_user:
         raise HTTPException(
             status_code=400,
             detail="A user with this email already exists."
         )
     hashed_password = get_password_hash(user_in.password)
-    user = User(
-        email=user_in.email,
-        hashed_password=hashed_password,
-        full_name=user_in.full_name,
-        company_name=user_in.company_name,
-        # Default key is set in database config, but user can override it in their profile
-        groq_api_key=None,
-        company_branding=None
-    )
-    db.add(user)
-    db.commit()
-    db.refresh(user)
-    return user
+    new_id = get_next_sequence_value(db, "users")
+    user_dict = {
+        "_id": new_id,
+        "email": user_in.email,
+        "hashed_password": hashed_password,
+        "full_name": user_in.full_name,
+        "company_name": user_in.company_name,
+        "groq_api_key": None,
+        "company_branding": None,
+        "created_at": datetime.utcnow(),
+        "updated_at": datetime.utcnow()
+    }
+    db.users.insert_one(user_dict)
+    return User(user_dict)
 
 @router.post("/login", response_model=Token)
-def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)):
-    user = db.query(User).filter(User.email == form_data.username).first()
-    if not user or not verify_password(form_data.password, user.hashed_password):
+def login(form_data: OAuth2PasswordRequestForm = Depends(), db = Depends(get_db)):
+    user_data = db.users.find_one({"email": form_data.username})
+    if not user_data or not verify_password(form_data.password, user_data.get("hashed_password")):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
             headers={"WWW-Authenticate": "Bearer"},
         )
-    access_token = create_access_token(data={"sub": user.email})
+    access_token = create_access_token(data={"sub": user_data["email"]})
     return {"access_token": access_token, "token_type": "bearer"}
 
 @router.get("/me", response_model=UserResponse)
@@ -96,15 +96,20 @@ def read_users_me(current_user: User = Depends(get_current_user)):
 def update_settings(
     settings_in: UserSettingsUpdate,
     current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db)
+    db = Depends(get_db)
 ):
+    updates = {}
     if settings_in.groq_api_key is not None:
-        current_user.groq_api_key = settings_in.groq_api_key
+        updates["groq_api_key"] = settings_in.groq_api_key
     if settings_in.company_name is not None:
-        current_user.company_name = settings_in.company_name
+        updates["company_name"] = settings_in.company_name
     if settings_in.company_branding is not None:
-        current_user.company_branding = settings_in.company_branding
+        updates["company_branding"] = settings_in.company_branding
         
-    db.commit()
-    db.refresh(current_user)
+    if updates:
+        updates["updated_at"] = datetime.utcnow()
+        db.users.update_one({"_id": current_user.id}, {"$set": updates})
+        user_data = db.users.find_one({"_id": current_user.id})
+        return User(user_data)
+        
     return current_user

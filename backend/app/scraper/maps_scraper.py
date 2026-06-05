@@ -2,11 +2,10 @@ import asyncio
 import logging
 import random
 import json
-from sqlalchemy.orm import Session
 from playwright.async_api import async_playwright
 from datetime import datetime
 
-from backend.app.db.models import SearchHistory, Lead, User
+from backend.app.db.session import get_next_sequence_value
 from backend.app.scraper.web_crawler import run_website_audit
 from backend.app.config import settings
 from backend.app.services.ai_service import call_groq_llm
@@ -244,55 +243,185 @@ async def _run_playwright_scrape(search_query: str, min_rating: float, min_revie
                     # Rating & Reviews
                     rating_val = None
                     reviews_val = 0
-                    rating_el = await card.query_selector('span[role="img"]')
-                    if rating_el:
-                        aria_label = await rating_el.get_attribute("aria-label")
-                        if aria_label and "stars" in aria_label:
-                            try:
-                                parts = aria_label.split(" ")
-                                rating_val = float(parts[0])
-                            except Exception:
-                                pass
+                    
+                    # Try to extract details from card text content (smarter, layout-independent extraction)
+                    card_text = await card.inner_text()
+                    lines = [line.strip() for line in card_text.split("\n") if line.strip()]
+                    
+                    import re
+                    # Parse rating and reviews count (e.g. "4.5 (1.2K)")
+                    match = re.search(r"(\d\.\d)\s*\(([\d,.]+[KM]?)\)", card_text)
+                    if match:
+                        try:
+                            rating_val = float(match.group(1))
+                            rev_text = match.group(2).replace(",", "").strip()
+                            if "K" in rev_text:
+                                reviews_val = int(float(rev_text.replace("K", "")) * 1000)
+                            elif "M" in rev_text:
+                                reviews_val = int(float(rev_text.replace("M", "")) * 1000000)
+                            elif rev_text.isdigit():
+                                reviews_val = int(rev_text)
+                        except Exception:
+                            pass
                                 
-                    # Try to get reviews count using common text selectors
-                    rev_el = await card.query_selector('span.UY7F9')
-                    if rev_el:
-                        rev_text = await rev_el.inner_text()
-                        rev_text = rev_text.replace("(", "").replace(")", "").replace(",", "").strip()
-                        if rev_text.isdigit():
-                            reviews_val = int(rev_text)
+                    # Fallback to standard selector for rating if not extracted from text
+                    if rating_val is None:
+                        rating_el = await card.query_selector('span[role="img"]')
+                        if rating_el:
+                            aria_label = await rating_el.get_attribute("aria-label")
+                            if aria_label and "stars" in aria_label:
+                                try:
+                                    parts = aria_label.split(" ")
+                                    rating_val = float(parts[0])
+                                except Exception:
+                                    pass
+                                    
+                    # Fallback to standard selector for reviews count
+                    if reviews_val == 0:
+                        rev_el = await card.query_selector('span.UY7F9')
+                        if rev_el:
+                            rev_text = await rev_el.inner_text()
+                            rev_text = rev_text.replace("(", "").replace(")", "").replace(",", "").strip()
+                            if rev_text.isdigit():
+                                reviews_val = int(rev_text)
                             
-                    # Website
-                    website_val = None
-                    web_el = await card.query_selector('a[data-value="Website"]')
-                    if web_el:
-                        website_val = await web_el.get_attribute("href")
-                        
-                    # Phone
-                    phone_val = None
-                    phone_el = await card.query_selector('button[data-value="Phone"]')
-                    if phone_el:
-                        phone_val = await phone_el.get_attribute("aria-label")
-                        if phone_val:
-                            phone_val = phone_val.replace("Phone:", "").strip()
-                            
-                    # Address and Category
-                    info_lines = await card.query_selector_all('div.W4E35c')
+                    # Address and Category from card text lines
                     address_val = None
                     category_val = None
-                    if len(info_lines) > 0:
-                        line_text = await info_lines[0].inner_text()
-                        parts = line_text.split("·")
-                        if len(parts) > 0:
-                            category_val = parts[0].strip()
-                        if len(parts) > 1:
-                            address_val = parts[1].strip()
+                    for line in lines:
+                        if "·" in line and not any(kw in line.lower() for kw in ["open", "close", "cloy", "delivery", "takeaway", "dine-in"]):
+                            parts = line.split("·")
+                            if len(parts) > 0:
+                                category_val = parts[0].strip()
+                            if len(parts) > 1:
+                                address_val = parts[1].strip()
+                            break
                             
-                    # Google Maps Link
+                    # Fallback to info lines (W4E35c) if card text parsing didn't find category/address
+                    if not category_val or not address_val:
+                        info_lines = await card.query_selector_all('div.W4E35c')
+                        if len(info_lines) > 0:
+                            line_text = await info_lines[0].inner_text()
+                            parts = line_text.split("·")
+                            if not category_val and len(parts) > 0:
+                                category_val = parts[0].strip()
+                            if not address_val and len(parts) > 1:
+                                address_val = parts[1].strip()
+                            
+                    # Google Maps Link from card snippet
                     maps_link = None
                     link_el = await card.query_selector('a[href*="/maps/place/"]')
                     if link_el:
                         maps_link = await link_el.get_attribute("href")
+
+                    # Website & Phone & Address from detail panel
+                    website_val = None
+                    phone_val = None
+                    
+                    # Click the card to open detail panel
+                    card_link_el = await card.query_selector('a.hfpxzc')
+                    if card_link_el:
+                        try:
+                            # Force click to avoid overlay interception issues
+                            await card_link_el.click(force=True)
+                            
+                            # Smart wait: wait for the detail panel title to update to the clicked business name
+                            loaded = False
+                            for _ in range(15): # wait up to 3 seconds (15 * 200ms)
+                                h1_el = await page.query_selector('h1')
+                                if h1_el:
+                                    h1_text = await h1_el.inner_text()
+                                    if name.lower() in h1_text.lower() or h1_text.lower() in name.lower():
+                                        loaded = True
+                                        break
+                                await page.wait_for_timeout(200)
+                                
+                            # Fallback timeout if not verified by h1 title match
+                            if not loaded:
+                                await page.wait_for_timeout(1000)
+                            # Extract rating and reviews from detail panel
+                            rating_detail_el = await page.query_selector('.F7nice')
+                            if rating_detail_el:
+                                try:
+                                    detail_text = await rating_detail_el.inner_text()
+                                    match_detail = re.search(r"(\d\.\d)\s*\(([\d,.]+[KM]?)\)", detail_text)
+                                    if match_detail:
+                                        rating_val = float(match_detail.group(1))
+                                        rev_text = match_detail.group(2).replace(",", "").strip()
+                                        if "K" in rev_text:
+                                            reviews_val = int(float(rev_text.replace("K", "")) * 1000)
+                                        elif "M" in rev_text:
+                                            reviews_val = int(float(rev_text.replace("M", "")) * 1000000)
+                                        elif rev_text.isdigit():
+                                            reviews_val = int(rev_text)
+                                except Exception as e:
+                                    logger.warning(f"Error parsing rating from detail panel class F7nice: {e}")
+                                    
+                            if reviews_val == 0:
+                                try:
+                                    # Try to find reviews count button in detail panel
+                                    buttons_el = await page.query_selector_all('button')
+                                    for btn in buttons_el:
+                                        btn_text = await btn.inner_text()
+                                        if btn_text and ("reviews" in btn_text or "review" in btn_text):
+                                            match_btn = re.search(r"([\d,.]+[KM]?)\s*reviews?", btn_text, re.IGNORECASE)
+                                            if match_btn:
+                                                rev_text = match_btn.group(1).replace(",", "").strip()
+                                                if "K" in rev_text:
+                                                    reviews_val = int(float(rev_text.replace("K", "")) * 1000)
+                                                elif "M" in rev_text:
+                                                    reviews_val = int(float(rev_text.replace("M", "")) * 1000000)
+                                                elif rev_text.isdigit():
+                                                    reviews_val = int(rev_text)
+                                                break
+                                except Exception:
+                                    pass
+
+                            # Extract website from detail panel
+                            web_el = await page.query_selector('a[data-item-id="authority"]')
+                            if web_el:
+                                website_val = await web_el.get_attribute("href")
+                                
+                            # Extract phone from detail panel
+                            phone_el = await page.query_selector('[data-item-id^="phone:tel:"]')
+                            if phone_el:
+                                item_id = await phone_el.get_attribute("data-item-id")
+                                if item_id and item_id.startswith("phone:tel:"):
+                                    phone_val = item_id.replace("phone:tel:", "").strip()
+                                else:
+                                    phone_val = await phone_el.inner_text()
+                                    if not phone_val:
+                                        aria_label = await phone_el.get_attribute("aria-label")
+                                        if aria_label and "Phone:" in aria_label:
+                                            phone_val = aria_label.replace("Phone:", "").strip()
+                                            
+                            # Extract address from detail panel
+                            address_el = await page.query_selector('[data-item-id="address"]')
+                            if address_el:
+                                aria_label = await address_el.get_attribute("aria-label")
+                                if aria_label and "Address:" in aria_label:
+                                    address_val = aria_label.replace("Address:", "").strip()
+                                else:
+                                    address_val = await address_el.inner_text()
+                                    
+                            # Extract maps link from page URL if card maps link wasn't found
+                            if not maps_link:
+                                maps_link = page.url
+                        except Exception as detail_err:
+                            logger.warning(f"Error opening/extracting from detail panel for {name}: {detail_err}")
+                            
+                    # Fallback to card-level selectors if detail panel extraction yielded nothing
+                    if not website_val:
+                        web_el_card = await card.query_selector('a[data-value="Website"]')
+                        if web_el_card:
+                            website_val = await web_el_card.get_attribute("href")
+                            
+                    if not phone_val:
+                        phone_el_card = await card.query_selector('button[data-value="Phone"]')
+                        if phone_el_card:
+                            phone_val = await phone_el_card.get_attribute("aria-label")
+                            if phone_val:
+                                phone_val = phone_val.replace("Phone:", "").strip()
 
                     # Filters
                     rating_val = rating_val or 0.0
@@ -339,24 +468,25 @@ async def scrape_google_maps(
     search_history_id: int,
     db_session_maker
 ):
-    db: Session = db_session_maker()
-    history = db.query(SearchHistory).filter(SearchHistory.id == search_history_id).first()
+    db = db_session_maker()
+    history = db.search_histories.find_one({"_id": search_history_id})
     if not history:
         logger.error(f"SearchHistory {search_history_id} not found.")
-        db.close()
         return
 
-    history.status = "scraping"
-    db.commit()
+    db.search_histories.update_one(
+        {"_id": search_history_id},
+        {"$set": {"status": "scraping"}}
+    )
 
     search_query = f"{query} in {location}" if location else query
     logger.info(f"Starting Maps Scraping for: {search_query}")
     
     leads_found = []
     
-    user_id = history.user_id
-    user = db.query(User).filter(User.id == user_id).first()
-    api_key = user.groq_api_key if (user and user.groq_api_key) else settings.GROQ_API_KEY
+    user_id = history.get("user_id")
+    user = db.users.find_one({"_id": user_id})
+    api_key = user.get("groq_api_key") if (user and user.get("groq_api_key")) else settings.GROQ_API_KEY
 
     try:
         # Run Playwright in a separate thread with a ProactorEventLoop on Windows
@@ -389,10 +519,10 @@ async def scrape_google_maps(
     saved_leads_ids = []
     for l_data in leads_found:
         # Check if lead already exists in this search
-        existing = db.query(Lead).filter(
-            Lead.search_history_id == search_history_id,
-            Lead.name == l_data["name"]
-        ).first()
+        existing = db.leads.find_one({
+            "search_history_id": search_history_id,
+            "name": l_data["name"]
+        })
         
         if existing:
             continue
@@ -404,30 +534,34 @@ async def scrape_google_maps(
             # Randomly tag scraped leads as basic or modern for testing
             website_type = random.choice(["basic", "modern"])
 
-        lead = Lead(
-            search_history_id=search_history_id,
-            name=l_data["name"],
-            phone=l_data.get("phone"),
-            website=web_url,
-            address=l_data.get("address"),
-            rating=l_data.get("rating"),
-            reviews_count=l_data.get("reviews_count"),
-            category=l_data.get("category"),
-            google_maps_url=l_data.get("google_maps_url"),
-            website_type=website_type,
-            audit_status="pending" if web_url else "completed", # No website -> audit is instant
-            status="New"
-        )
-        db.add(lead)
-        db.commit()
-        db.refresh(lead)
-        saved_leads_ids.append(lead.id)
+        new_lead_id = get_next_sequence_value(db, "leads")
+        lead_dict = {
+            "_id": new_lead_id,
+            "search_history_id": search_history_id,
+            "name": l_data["name"],
+            "phone": l_data.get("phone"),
+            "website": web_url,
+            "address": l_data.get("address"),
+            "rating": l_data.get("rating"),
+            "reviews_count": l_data.get("reviews_count"),
+            "category": l_data.get("category"),
+            "google_maps_url": l_data.get("google_maps_url"),
+            "website_type": website_type,
+            "audit_status": "pending" if web_url else "completed", # No website -> audit is instant
+            "status": "New",
+            "created_at": datetime.utcnow()
+        }
+        db.leads.insert_one(lead_dict)
+        saved_leads_ids.append(new_lead_id)
 
     # Update history status
-    history.results_count = len(saved_leads_ids)
-    history.status = "completed"
-    db.commit()
-    db.close()
+    db.search_histories.update_one(
+        {"_id": search_history_id},
+        {"$set": {
+            "results_count": len(saved_leads_ids),
+            "status": "completed"
+        }}
+    )
 
     # Trigger async website audit jobs for each lead with a website
     # Using background tasks or async events
