@@ -325,11 +325,14 @@ async def _run_playwright_scrape(search_query: str, min_rating: float, min_revie
                             # Ensure the element is scrolled into view
                             await card_link_el.scroll_into_view_if_needed()
                             try:
-                                # Force click with a short timeout to avoid 30s hangs
-                                await card_link_el.click(force=True, timeout=3000)
-                            except Exception as click_err:
-                                logger.info(f"Playwright standard click failed or timed out for {name}, trying JS click fallback: {click_err}")
+                                # Try JavaScript click first (highly reliable, ignores pointer interception overlay issues)
                                 await page.evaluate("el => el.click()", card_link_el)
+                            except Exception as js_err:
+                                logger.info(f"JavaScript click failed for {name}, trying standard click as fallback: {js_err}")
+                                try:
+                                    await card_link_el.click(force=True, timeout=3000)
+                                except Exception as click_err:
+                                    logger.warning(f"Standard click fallback also failed for {name}: {click_err}")
                             
                             # Smart wait: wait for the detail panel title to update to the clicked business name
                             loaded = False
@@ -344,7 +347,7 @@ async def _run_playwright_scrape(search_query: str, min_rating: float, min_revie
                                 
                             # Fallback timeout if not verified by h1 title match
                             if not loaded:
-                                await page.wait_for_timeout(1000)
+                                await page.wait_for_timeout(1500)
                             # Extract rating and reviews from detail panel
                             rating_detail_el = await page.query_selector('.F7nice')
                             if rating_detail_el:

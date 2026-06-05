@@ -49,7 +49,7 @@ def export_leads_csv(
     
     # Header
     writer.writerow([
-        "ID", "Name", "Phone", "Website", "Address", "Rating", 
+        "ID", "Name", "Phone", "Website", "Address", "Google Maps Link", "Rating", 
         "Reviews Count", "Category", "Website Type", "Lead Score", 
         "Score Category", "CRM Status", "Notes", "Tags", "Created At"
     ])
@@ -58,6 +58,7 @@ def export_leads_csv(
         created_at_str = l.created_at.strftime("%Y-%m-%d") if isinstance(l.created_at, datetime) else str(l.created_at)[:10]
         writer.writerow([
             l.id, l.name, l.phone or "", l.website or "", l.address or "",
+            l.google_maps_url or "",
             l.rating or 0.0, l.reviews_count or 0, l.category or "",
             l.website_type, l.lead_score or "", l.lead_score_category or "",
             l.status, l.notes or "", l.tags or "", created_at_str
@@ -99,6 +100,7 @@ def export_leads_excel(
             "Phone": l.phone or "",
             "Website": l.website or "",
             "Address": l.address or "",
+            "Google Maps Link": l.google_maps_url or "",
             "Rating": l.rating or 0.0,
             "Reviews Count": l.reviews_count or 0,
             "Category": l.category or "",
