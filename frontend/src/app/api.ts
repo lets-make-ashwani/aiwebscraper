@@ -113,6 +113,7 @@ export const api = {
 
   // Settings
   validateKey: (apiKey: string) => request("/settings/validate-key", { method: "POST", body: JSON.stringify({ api_key: apiKey }) }),
+  validateGeminiKey: (apiKey: string) => request("/settings/validate-gemini-key", { method: "POST", body: JSON.stringify({ api_key: apiKey }) }),
   updateBranding: (data: any) => request("/settings/branding", { method: "PUT", body: JSON.stringify(data) }),
 
   // Exports

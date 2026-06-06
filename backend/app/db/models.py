@@ -12,6 +12,7 @@ class User:
         self.full_name = self._data.get("full_name")
         self.company_name = self._data.get("company_name")
         self.groq_api_key = self._data.get("groq_api_key")
+        self.gemini_api_key = self._data.get("gemini_api_key")
         self.company_branding = self._data.get("company_branding")
         self.created_at = self._data.get("created_at") or datetime.utcnow()
         self.updated_at = self._data.get("updated_at") or datetime.utcnow()

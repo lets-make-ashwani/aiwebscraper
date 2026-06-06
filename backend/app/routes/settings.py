@@ -42,6 +42,29 @@ async def validate_groq_api_key(
             detail=f"Network error trying to contact Groq API: {str(e)}"
         )
 
+@router.post("/validate-gemini-key")
+async def validate_gemini_api_key(
+    req: KeyValidateRequest,
+    current_user: User = Depends(get_current_user)
+):
+    """Validates the provided Google Gemini API Key by testing it against the models list endpoint."""
+    url = f"https://generativelanguage.googleapis.com/v1beta/models?key={req.api_key}"
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            response = await client.get(url)
+            if response.status_code == 200:
+                return {"valid": True, "message": "Gemini API key validated successfully!"}
+            else:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid Gemini API Key. Google API returned status code: {response.status_code}"
+                )
+    except httpx.RequestError as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Network error trying to contact Google Gemini API: {str(e)}"
+        )
+
 @router.put("/branding", response_model=UserResponse)
 def update_branding_profile(
     req: BrandingUpdateRequest,

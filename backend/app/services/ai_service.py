@@ -1,6 +1,7 @@
 import httpx
 import logging
 import json
+import os
 from datetime import datetime
 from backend.app.config import settings
 from backend.app.db.models import Lead, WebsiteAudit, Proposal, Outreach
@@ -20,6 +21,18 @@ def get_groq_key_for_lead(db, lead: Lead) -> str:
     except Exception as e:
         logger.warning(f"Failed to fetch custom user Groq key: {e}")
     return settings.GROQ_API_KEY
+
+def get_gemini_key_for_lead(db, lead: Lead) -> str:
+    """Resolves the Gemini API Key, checking user's custom settings first, then falling back to env."""
+    try:
+        search = db.search_histories.find_one({"_id": lead.search_history_id})
+        if search:
+            user = db.users.find_one({"_id": search.get("user_id")})
+            if user and user.get("gemini_api_key"):
+                return user["gemini_api_key"]
+    except Exception as e:
+        logger.warning(f"Failed to fetch custom user Gemini key: {e}")
+    return settings.GEMINI_API_KEY or os.environ.get("GEMINI_API_KEY", "")
 
 async def call_groq_llm(api_key: str, system_prompt: str, user_prompt: str) -> str:
     """Performs HTTP POST completion request to the Groq API endpoint."""
@@ -57,6 +70,70 @@ async def call_groq_llm(api_key: str, system_prompt: str, user_prompt: str) -> s
         logger.error(f"Error making Groq API call: {e}")
         
     raise Exception("Groq API Call Failed")
+
+async def call_gemini_llm(api_key: str, system_prompt: str, user_prompt: str) -> str:
+    """Performs HTTP POST request to Google's Gemini API."""
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+    headers = {
+        "Content-Type": "application/json"
+    }
+    payload = {
+        "contents": [
+            {
+                "role": "user",
+                "parts": [
+                    {"text": user_prompt}
+                ]
+            }
+        ],
+        "systemInstruction": {
+            "parts": [
+                {"text": system_prompt}
+            ]
+        },
+        "generationConfig": {
+            "temperature": 0.2
+        }
+    }
+    
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(url, headers=headers, json=payload)
+            if response.status_code == 200:
+                res_data = response.json()
+                try:
+                    return res_data["candidates"][0]["content"]["parts"][0]["text"]
+                except (KeyError, IndexError) as e:
+                    logger.error(f"Failed to parse Gemini response structure: {res_data}. Error: {e}")
+                    raise Exception("Failed to parse Gemini response")
+            else:
+                logger.error(f"Gemini API returned status {response.status_code}: {response.text}")
+                raise Exception(f"Gemini API error: {response.text}")
+    except Exception as e:
+        logger.error(f"Error making Gemini API call: {e}")
+        raise e
+
+async def call_ai_service(db, lead: Lead, system_prompt: str, user_prompt: str) -> str:
+    """Routes the request to the configured AI provider (Gemini or Groq) and handles fallback."""
+    # 1. Try Gemini if user has a Gemini API key configured
+    gemini_key = get_gemini_key_for_lead(db, lead)
+    if gemini_key:
+        try:
+            logger.info("Routing request to Google Gemini API (gemini-1.5-flash)...")
+            return await call_gemini_llm(gemini_key, system_prompt, user_prompt)
+        except Exception as e:
+            logger.warning(f"Gemini API call failed: {e}. Trying Groq fallback...")
+            
+    # 2. Try Groq if user has a Groq API key configured
+    groq_key = get_groq_key_for_lead(db, lead)
+    if groq_key:
+        try:
+            logger.info("Routing request to Groq API (llama-3.3-70b-versatile)...")
+            return await call_groq_llm(groq_key, system_prompt, user_prompt)
+        except Exception as e:
+            logger.error(f"Groq API call also failed: {e}")
+            
+    raise Exception("No configured AI model API keys succeeded.")
 
 # Fallback generators for offline/key failure states
 def generate_offline_analysis(lead_name: str, category: str, score: int, has_website: bool) -> str:
@@ -237,7 +314,7 @@ Provide a concise response strictly in markdown with these exact headings:
 
     analysis_report = ""
     try:
-        analysis_report = await call_groq_llm(api_key, system_prompt, user_prompt)
+        analysis_report = await call_ai_service(db, lead, system_prompt, user_prompt)
     except Exception:
         # Fallback to local template
         analysis_report = generate_offline_analysis(
@@ -273,7 +350,7 @@ Ensure the JSON is valid. Do not wrap the JSON in markdown code blocks.
     
     outreach_texts = None
     try:
-        outreach_json = await call_groq_llm(api_key, outreach_system, outreach_user)
+        outreach_json = await call_ai_service(db, lead, outreach_system, outreach_user)
         # Parse json
         cleaned_json = outreach_json.strip()
         if cleaned_json.startswith("```json"):
@@ -313,7 +390,7 @@ Generate a short 1-page proposal. Include project scope, goals, and pricing stru
     
     proposal_text = ""
     try:
-        proposal_text = await call_groq_llm(api_key, proposal_system, proposal_user)
+        proposal_text = await call_ai_service(db, lead, proposal_system, proposal_user)
     except Exception:
         proposal_text = generate_offline_proposal(lead.name, lead.category, "short")
 
@@ -366,7 +443,7 @@ Ensure the proposal is detailed, beautifully formatted in markdown, and customiz
 """
 
     try:
-        proposal_text = await call_groq_llm(api_key, system_prompt, user_prompt)
+        proposal_text = await call_ai_service(db, lead, system_prompt, user_prompt)
     except Exception:
         proposal_text = generate_offline_proposal(lead.name, lead.category, format_type)
 

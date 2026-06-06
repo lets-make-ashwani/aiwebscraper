@@ -8,7 +8,7 @@ from datetime import datetime
 from backend.app.db.session import get_next_sequence_value
 from backend.app.scraper.web_crawler import run_website_audit
 from backend.app.config import settings
-from backend.app.services.ai_service import call_groq_llm
+from backend.app.services.ai_service import call_groq_llm, call_gemini_llm
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("MapsScraper")
@@ -117,8 +117,8 @@ def generate_mock_leads(query: str, location: str, min_rating: float, min_review
     return leads
 
 
-async def generate_mock_leads_ai(query: str, location: str, min_rating: float, min_reviews: int, api_key: str) -> list:
-    """Generates highly realistic query-matched business leads using Groq when scraper fails."""
+async def generate_mock_leads_ai(query: str, location: str, min_rating: float, min_reviews: int, gemini_key: str = "", groq_key: str = "") -> list:
+    """Generates highly realistic query-matched business leads using Gemini or Groq when scraper fails."""
     system_prompt = "You are an expert B2B lead generation assistant. Generate realistic business lead records in JSON format."
     
     user_prompt = f"""
@@ -144,7 +144,19 @@ async def generate_mock_leads_ai(query: str, location: str, min_rating: float, m
     """
     
     try:
-        res_json = await call_groq_llm(api_key, system_prompt, user_prompt)
+        if gemini_key:
+            try:
+                res_json = await call_gemini_llm(gemini_key, system_prompt, user_prompt)
+            except Exception as gemini_err:
+                if groq_key:
+                    logger.warning(f"Mock lead generation failed on Gemini: {gemini_err}. Trying Groq fallback...")
+                    res_json = await call_groq_llm(groq_key, system_prompt, user_prompt)
+                else:
+                    raise gemini_err
+        elif groq_key:
+            res_json = await call_groq_llm(groq_key, system_prompt, user_prompt)
+        else:
+            raise Exception("No AI API key provided")
         # Parse json
         cleaned = res_json.strip()
         if cleaned.startswith("```json"):
@@ -495,7 +507,8 @@ async def scrape_google_maps(
     
     user_id = history.get("user_id")
     user = db.users.find_one({"_id": user_id})
-    api_key = user.get("groq_api_key") if (user and user.get("groq_api_key")) else settings.GROQ_API_KEY
+    groq_key = user.get("groq_api_key") if (user and user.get("groq_api_key")) else settings.GROQ_API_KEY
+    gemini_key = user.get("gemini_api_key") if (user and user.get("gemini_api_key")) else settings.GEMINI_API_KEY
 
     try:
         # Run Playwright in a separate thread with a ProactorEventLoop on Windows
@@ -509,16 +522,16 @@ async def scrape_google_maps(
         )
     except Exception as e:
         logger.warning(f"Playwright Scraping failed/blocked: {e}. Falling back to simulation mode.")
-        if api_key:
-            leads_found = await generate_mock_leads_ai(query, location, min_rating, min_reviews, api_key)
+        if gemini_key or groq_key:
+            leads_found = await generate_mock_leads_ai(query, location, min_rating, min_reviews, gemini_key, groq_key)
         if not leads_found:
             leads_found = generate_mock_leads(query, location, min_rating, min_reviews)
 
     # If no results found, let's use the mock generator as a fallback guarantee so users always get data
     if not leads_found:
         logger.info("No leads scraped from Google Maps. Triggering fallback simulation.")
-        if api_key:
-            leads_found = await generate_mock_leads_ai(query, location, min_rating, min_reviews, api_key)
+        if gemini_key or groq_key:
+            leads_found = await generate_mock_leads_ai(query, location, min_rating, min_reviews, gemini_key, groq_key)
         if not leads_found:
             leads_found = generate_mock_leads(query, location, min_rating, min_reviews)
 

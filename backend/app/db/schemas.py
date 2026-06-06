@@ -18,12 +18,14 @@ class UserUpdate(BaseModel):
 
 class UserSettingsUpdate(BaseModel):
     groq_api_key: Optional[str] = None
+    gemini_api_key: Optional[str] = None
     company_name: Optional[str] = None
     company_branding: Optional[str] = None
 
 class UserResponse(UserBase):
     id: int
     groq_api_key: Optional[str] = None
+    gemini_api_key: Optional[str] = None
     company_branding: Optional[str] = None
     created_at: datetime
     

@@ -69,6 +69,7 @@ def register(user_in: UserCreate, db = Depends(get_db)):
         "full_name": user_in.full_name,
         "company_name": user_in.company_name,
         "groq_api_key": None,
+        "gemini_api_key": None,
         "company_branding": None,
         "created_at": datetime.utcnow(),
         "updated_at": datetime.utcnow()
@@ -101,6 +102,8 @@ def update_settings(
     updates = {}
     if settings_in.groq_api_key is not None:
         updates["groq_api_key"] = settings_in.groq_api_key
+    if settings_in.gemini_api_key is not None:
+        updates["gemini_api_key"] = settings_in.gemini_api_key
     if settings_in.company_name is not None:
         updates["company_name"] = settings_in.company_name
     if settings_in.company_branding is not None:

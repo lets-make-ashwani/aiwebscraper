@@ -9,12 +9,16 @@ import { api } from "../api";
 
 export default function Settings() {
   const [groqKey, setGroqKey] = useState("");
+  const [geminiKey, setGeminiKey] = useState("");
   const [companyName, setCompanyName] = useState("");
   const [brandingText, setBrandingText] = useState("");
   
   // Validation status
   const [validating, setValidating] = useState(false);
   const [keyValid, setKeyValid] = useState<boolean | null>(null);
+  
+  const [geminiValidating, setGeminiValidating] = useState(false);
+  const [geminiKeyValid, setGeminiKeyValid] = useState<boolean | null>(null);
   
   // Save states
   const [saving, setSaving] = useState(false);
@@ -26,10 +30,14 @@ export default function Settings() {
     api.me()
       .then((user) => {
         setGroqKey(user.groq_api_key || "");
+        setGeminiKey(user.gemini_api_key || "");
         setCompanyName(user.company_name || "");
         setBrandingText(user.company_branding || "");
         if (user.groq_api_key) {
           setKeyValid(true);
+        }
+        if (user.gemini_api_key) {
+          setGeminiKeyValid(true);
         }
       })
       .catch((err) => {
@@ -63,6 +71,32 @@ export default function Settings() {
     }
   };
 
+  const handleValidateGeminiKey = async () => {
+    if (!geminiKey) {
+      setError("Please input a Gemini API Key first.");
+      return;
+    }
+
+    setGeminiValidating(true);
+    setGeminiKeyValid(null);
+    setError("");
+
+    try {
+      const res = await api.validateGeminiKey(geminiKey);
+      if (res.valid) {
+        setGeminiKeyValid(true);
+        setSuccess(true);
+        setTimeout(() => setSuccess(false), 2000);
+      }
+    } catch (err: any) {
+      console.error(err);
+      setGeminiKeyValid(false);
+      setError(err.message || "Failed to validate Gemini key. Ensure the key is correct and active.");
+    } finally {
+      setGeminiValidating(false);
+    }
+  };
+
   const handleSaveProfileSettings = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
@@ -73,6 +107,7 @@ export default function Settings() {
       // 1. Update API Key settings
       await api.updateSettings({
         groq_api_key: groqKey || null,
+        gemini_api_key: geminiKey || null,
         company_name: companyName || null,
         company_branding: brandingText || null
       });
@@ -174,6 +209,69 @@ export default function Settings() {
                   <>
                     <ShieldAlert className="h-4 w-4" />
                     <span>API Key validation failed. Please check the key.</span>
+                  </>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* Gemini API Config */}
+          <div className="glass-card rounded-2xl p-6 border border-border space-y-4">
+            <div className="flex items-center gap-2 text-indigo-500 font-bold text-sm">
+              <Key className="h-4 w-4" />
+              <span>Google Gemini AI Integration</span>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                Gemini API Key (Free Tier supported)
+              </label>
+              <div className="flex gap-2">
+                <div className="relative flex-1">
+                  <input
+                    type="password"
+                    value={geminiKey}
+                    onChange={(e) => {
+                      setGeminiKey(e.target.value);
+                      setGeminiKeyValid(null);
+                    }}
+                    placeholder="AIzaSy••••••••••••••••••••"
+                    className="block w-full rounded-xl border border-border bg-slate-900/10 dark:bg-slate-950/60 py-2.5 px-4 text-sm outline-none transition-all focus:border-primary"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={handleValidateGeminiKey}
+                  disabled={geminiValidating || !geminiKey}
+                  className="px-4 py-2.5 rounded-xl border border-border hover:bg-secondary font-bold text-xs transition-colors shrink-0 disabled:opacity-50 cursor-pointer"
+                >
+                  {geminiValidating ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    "Validate Key"
+                  )}
+                </button>
+              </div>
+              <p className="text-[10px] text-muted-foreground mt-1">
+                Enter your Google Gemini API key to run analysis, score leads, and generate outreach pitches. If both Gemini and Groq keys are configured, Gemini will be used as primary.
+              </p>
+            </div>
+
+            {geminiKeyValid !== null && (
+              <div className={`flex items-center gap-2 p-3 rounded-lg text-xs font-semibold ${
+                geminiKeyValid 
+                  ? "bg-emerald-500/10 border border-emerald-500/20 text-emerald-500" 
+                  : "bg-rose-500/10 border border-rose-500/20 text-rose-500"
+              }`}>
+                {geminiKeyValid ? (
+                  <>
+                    <CheckCircle2 className="h-4 w-4" />
+                    <span>Gemini connection active. API Key verified successfully!</span>
+                  </>
+                ) : (
+                  <>
+                    <ShieldAlert className="h-4 w-4" />
+                    <span>Gemini API Key validation failed. Please check the key.</span>
                   </>
                 )}
               </div>
