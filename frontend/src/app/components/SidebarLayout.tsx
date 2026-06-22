@@ -4,7 +4,7 @@ import React, { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { 
-  LayoutDashboard, Search, Layers, History, Settings, LogOut, Sun, Moon, Menu, X, Briefcase, User 
+  LayoutDashboard, Search, Layers, History, Settings, LogOut, Sun, Moon, Menu, X, Briefcase, User, Send 
 } from "lucide-react";
 import { api, removeToken, getToken } from "../api";
 
@@ -68,6 +68,7 @@ export default function SidebarLayout({ children }: { children: React.ReactNode 
     { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
     { name: "Lead Finder", href: "/lead-finder", icon: Search },
     { name: "CRM Pipeline", href: "/crm", icon: Layers },
+    { name: "Outreach Campaigns", href: "/campaigns", icon: Send },
     { name: "Search History", href: "/history", icon: History },
     { name: "Branding & Keys", href: "/settings", icon: Settings },
   ];

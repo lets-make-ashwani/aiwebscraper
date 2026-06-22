@@ -212,9 +212,74 @@ async def generate_ai_analysis_and_score(lead_id: int, db_session_maker):
 
     lead = Lead(lead_data)
     audit = lead.audit
+    search = db.search_histories.find_one({"_id": lead.search_history_id})
+    user = db.users.find_one({"_id": search.get("user_id")}) if search else None
     api_key = get_groq_key_for_lead(db, lead)
 
-    # 1. Programmatic Scoring Logic
+    # 1. Google Reviews Sentiment Analysis
+    reviews_sentiment = {}
+    scraped_revs = getattr(lead, "scraped_reviews", []) or []
+    
+    if scraped_revs:
+        system_prompt = "You are a customer feedback and sentiment analyst. Analyze the provided customer reviews for a local business and extract a concise summary of complaints and praise."
+        user_prompt = f"""
+        Analyze these customer reviews for:
+        Business Name: {lead.name}
+        Category: {lead.category or "local business"}
+        
+        Reviews:
+        {chr(10).join([f"- {r}" for r in scraped_revs])}
+        
+        Provide your analysis response strictly in JSON format matching this structure:
+        {{
+          "complaints": ["complaint 1 (concise)", "complaint 2"],
+          "praises": ["praise 1 (concise)", "praise 2"],
+          "summary": "1-2 sentence summary of overall customer sentiment"
+        }}
+        Ensure the JSON is completely valid. Do not wrap the JSON in markdown code blocks.
+        """
+    else:
+        system_prompt = "You are a customer feedback analyst. Based on a local business's profile, generate typical/realistic customer sentiments (praises and complaints) that would correspond to its rating and review count."
+        user_prompt = f"""
+        Generate realistic customer feedback sentiment for:
+        Business Name: {lead.name}
+        Category: {lead.category or "local business"}
+        Rating: {lead.rating or "3.5"} stars ({lead.reviews_count or "12"} reviews)
+        
+        Provide the response strictly in JSON format matching this structure:
+        {{
+          "complaints": ["complaint 1 (concise)", "complaint 2"],
+          "praises": ["praise 1 (concise)", "praise 2"],
+          "summary": "1-2 sentence summary of typical customer sentiment"
+        }}
+        Ensure the JSON is completely valid. Do not wrap the JSON in markdown code blocks.
+        """
+        
+    try:
+        sentiment_json = await call_ai_service(db, lead, system_prompt, user_prompt)
+        cleaned_json = sentiment_json.strip()
+        if cleaned_json.startswith("```json"):
+            cleaned_json = cleaned_json[7:]
+        if cleaned_json.endswith("```"):
+            cleaned_json = cleaned_json[:-3]
+        reviews_sentiment = json.loads(cleaned_json.strip())
+    except Exception as e:
+        logger.warning(f"Failed to generate review sentiment for lead {lead_id}: {e}")
+        # Default fallback values
+        reviews_sentiment = {
+            "complaints": ["Communication or booking response times could be faster", "Online scheduling is not directly available on the website"],
+            "praises": ["Service is generally rated highly by the local community", "Friendly team members"],
+            "summary": "Overall customers are happy with the work, but there is room to improve online scheduling and follow-ups."
+        }
+        
+    # Update database record and local object
+    db.leads.update_one(
+        {"_id": lead_id},
+        {"$set": {"reviews_sentiment": reviews_sentiment}}
+    )
+    lead.reviews_sentiment = reviews_sentiment
+
+    # 2. Programmatic Scoring Logic
     # Baseline score is 100. Apply deductions for deficiencies
     score = 100
     deductions = []
@@ -281,7 +346,7 @@ async def generate_ai_analysis_and_score(lead_id: int, db_session_maker):
         }}
     )
 
-    # 2. Call Groq for Business Analysis
+    # 3. Call Groq for Business Analysis
     system_prompt = "You are a professional local business growth consultant and website audit expert. Generate concise, actionable reports."
     user_prompt = f"""
 Analyze this local business:
@@ -329,12 +394,16 @@ Provide a concise response strictly in markdown with these exact headings:
         }}
     )
 
-    # 3. Pre-generate Default Proposal and Outreach
+    # 4. Pre-generate Default Proposal and Outreach
     # Generate outreach templates
     outreach_system = "You are an expert sales copywriter. Write highly personalized local cold outreach copy."
+    if user and user.get("custom_system_prompt"):
+        outreach_system += f"\n\nAdditional Instructions:\n{user['custom_system_prompt']}"
+    complaints_str = ", ".join(reviews_sentiment.get("complaints", []))
     outreach_user = f"""
 Write outreach copy for {lead.name} ({lead.category or 'business'}).
-Problems identified: {', '.join(deductions) if deductions else 'minor performance tweaks'}.
+Problems identified from website audit: {', '.join(deductions) if deductions else 'minor performance tweaks'}.
+Customer complaints identified from Google reviews: {complaints_str if complaints_str else 'N/A'}.
 Recommended solution: Custom high-converting landing page, local SEO optimization, booking system integration.
 
 Generate the templates and format the output EXACTLY in this JSON structure:

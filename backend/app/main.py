@@ -10,7 +10,7 @@ import uvicorn
 
 from backend.app.config import settings
 # Database session initialization is handled directly inside session.py via PyMongo client
-from backend.app.routes import auth, leads, dashboard, export, settings as settings_route
+from backend.app.routes import auth, leads, dashboard, export, settings as settings_route, campaigns
 
 app = FastAPI(
     title="LeadForge AI API",
@@ -34,6 +34,7 @@ app.include_router(leads.router, prefix="/api")
 app.include_router(dashboard.router, prefix="/api")
 app.include_router(export.router, prefix="/api")
 app.include_router(settings_route.router, prefix="/api")
+app.include_router(campaigns.router, prefix="/api")
 
 @app.get("/")
 def read_root():

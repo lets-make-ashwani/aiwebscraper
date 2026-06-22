@@ -331,69 +331,171 @@ export default function LeadDetails() {
                   {socialLinks.length > 0 && (
                     <div className="pt-2 border-t border-border">
                       <p className="text-xs font-bold text-slate-400 mb-2">Connected Social Links</p>
-                      <div className="flex flex-wrap gap-1">
-                        {socialLinks.map((link: string, idx: number) => {
+                      <div className="flex flex-wrap gap-2">
+                        {socialLinks.map((item: any, idx: number) => {
+                          const link = typeof item === 'string' ? item : item.url;
+                          const status = typeof item === 'string' ? 'active' : item.status;
+                          
                           let label = "Social";
                           if (link.includes("facebook.com")) label = "Facebook";
                           if (link.includes("instagram.com")) label = "Instagram";
                           if (link.includes("linkedin.com")) label = "LinkedIn";
                           if (link.includes("twitter.com")) label = "Twitter";
+                          if (link.includes("youtube.com")) label = "YouTube";
+                          
                           return (
-                            <a 
-                              key={idx} 
-                              href={link} 
-                              target="_blank" 
-                              rel="noreferrer"
-                              className="text-[10px] font-bold px-2.5 py-1 rounded-lg bg-secondary text-muted-foreground hover:text-primary transition-colors border border-border"
-                            >
-                              {label}
-                            </a>
+                            <div key={idx} className="flex items-center gap-1.5">
+                              <a 
+                                href={link} 
+                                target="_blank" 
+                                rel="noreferrer"
+                                className="text-[10px] font-bold px-2.5 py-1 rounded-lg bg-secondary text-muted-foreground hover:text-primary transition-colors border border-border"
+                              >
+                                {label}
+                              </a>
+                              <span 
+                                className={`h-2 w-2 rounded-full ${status === 'active' ? 'bg-emerald-500' : 'bg-rose-500'}`} 
+                                title={status === 'active' ? 'Profile link is active' : 'Profile link might be broken (404)'}
+                              />
+                            </div>
                           );
                         })}
                       </div>
                     </div>
                   )}
+
+                  {/* Emails & Additional Phones */}
+                  {(audit.emails || audit.phones) && (
+                    <div className="pt-3 border-t border-border/40 space-y-3">
+                      <p className="text-xs font-bold text-slate-400">Enriched Website Contacts</p>
+                      {audit.emails && (
+                        <div className="text-xs space-y-1">
+                          <p className="text-[9px] uppercase font-bold text-muted-foreground tracking-wider">Emails Found</p>
+                          <div className="flex flex-wrap gap-1.5">
+                            {audit.emails.split(",").map((email: string, idx: number) => (
+                              <span key={idx} className="bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 px-2 py-0.5 rounded text-[10px] font-semibold select-all">
+                                {email.trim()}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                      {audit.phones && (
+                        <div className="text-xs space-y-1 mt-2">
+                          <p className="text-[9px] uppercase font-bold text-muted-foreground tracking-wider">Phones Found</p>
+                          <div className="flex flex-wrap gap-1.5">
+                            {audit.phones.split(",").map((phone: string, idx: number) => (
+                              <span key={idx} className="bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 px-2 py-0.5 rounded text-[10px] font-semibold select-all">
+                                {phone.trim()}
+                              </span>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               ) : (
                 <div className="py-6 text-center text-xs text-muted-foreground">
-                  No technical website audit available.
+                  No website audit details compiled.
                 </div>
               )}
             </div>
-
-            {/* AI Report Card */}
-            <div className="glass-card rounded-2xl p-6 border border-border lg:col-span-2 space-y-6">
-              <div className="flex items-center gap-2 text-primary font-bold text-sm">
-                <Sparkles className="h-4 w-4 animate-pulse" />
-                <span>Groq Llama-3 AI Strategic Analysis</span>
+ 
+            {/* Right-column report and sentiment panel */}
+            <div className="lg:col-span-2 space-y-6">
+              {/* AI Report Card */}
+              <div className="glass-card rounded-2xl p-6 border border-border space-y-6">
+                <div className="flex items-center gap-2 text-primary font-bold text-sm">
+                  <Sparkles className="h-4 w-4 animate-pulse" />
+                  <span>Groq Llama-3 AI Strategic Analysis</span>
+                </div>
+ 
+                <div className="prose dark:prose-invert prose-indigo max-w-none text-sm leading-relaxed space-y-4">
+                  {audit?.audit_report ? (
+                    // Custom rendering of markdown headings for clean premium presentation
+                    audit.audit_report.split("\n").map((line: string, i: number) => {
+                      if (line.startsWith("### ")) {
+                        return (
+                          <h4 key={i} className="text-base font-extrabold text-indigo-500 dark:text-indigo-400 pt-3 border-b border-border/30 pb-1">
+                            {line.replace("### ", "")}
+                          </h4>
+                        );
+                      }
+                      if (line.startsWith("* ") || line.startsWith("- ")) {
+                        return (
+                          <div key={i} className="flex gap-2 items-start pl-2">
+                            <span className="text-primary mt-1.5 shrink-0 w-1.5 h-1.5 rounded-full bg-primary"></span>
+                            <span className="text-slate-700 dark:text-slate-300">{line.substring(2)}</span>
+                          </div>
+                        );
+                      }
+                      if (line.trim() === "") return <div key={i} className="h-1"></div>;
+                      return <p key={i} className="text-slate-600 dark:text-slate-300">{line}</p>;
+                    })
+                  ) : (
+                    <p className="text-muted-foreground italic">No analysis compile report found. Scoring process might be incomplete.</p>
+                  )}
+                </div>
               </div>
-
-              <div className="prose dark:prose-invert prose-indigo max-w-none text-sm leading-relaxed space-y-4">
-                {audit?.audit_report ? (
-                  // Custom rendering of markdown headings for clean premium presentation
-                  audit.audit_report.split("\n").map((line: string, i: number) => {
-                    if (line.startsWith("### ")) {
-                      return (
-                        <h4 key={i} className="text-base font-extrabold text-indigo-500 dark:text-indigo-400 pt-3 border-b border-border/30 pb-1">
-                          {line.replace("### ", "")}
-                        </h4>
-                      );
-                    }
-                    if (line.startsWith("* ") || line.startsWith("- ")) {
-                      return (
-                        <div key={i} className="flex gap-2 items-start pl-2">
-                          <span className="text-primary mt-1.5 shrink-0 w-1.5 h-1.5 rounded-full bg-primary"></span>
-                          <span className="text-slate-700 dark:text-slate-300">{line.substring(2)}</span>
-                        </div>
-                      );
-                    }
-                    if (line.trim() === "") return <div key={i} className="h-1"></div>;
-                    return <p key={i} className="text-slate-600 dark:text-slate-300">{line}</p>;
-                  })
-                ) : (
-                  <p className="text-muted-foreground italic">No analysis compile report found. Scoring process might be incomplete.</p>
-                )}
-              </div>
+ 
+              {/* Reviews Sentiment Card */}
+              {lead.reviews_sentiment && (
+                <div className="glass-card rounded-2xl p-6 border border-border space-y-4">
+                  <div className="flex items-center gap-2 text-primary font-bold text-sm">
+                    <Star className="h-4 w-4 text-amber-500 fill-amber-500 animate-pulse" />
+                    <span>Customer Reviews Sentiment (Google Maps)</span>
+                  </div>
+                  
+                  {lead.reviews_sentiment.summary && (
+                    <p className="text-xs text-muted-foreground italic leading-relaxed border-l-2 border-primary/40 pl-3">
+                      &ldquo;{lead.reviews_sentiment.summary}&rdquo;
+                    </p>
+                  )}
+                  
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-6 pt-2">
+                    {/* Complaints */}
+                    <div className="space-y-2">
+                      <p className="text-[10px] uppercase font-bold text-rose-500 tracking-wider flex items-center gap-1.5">
+                        <span className="h-2 w-2 rounded-full bg-rose-500 animate-pulse"></span>
+                        Key Complaints
+                      </p>
+                      <div className="space-y-2">
+                        {lead.reviews_sentiment.complaints && lead.reviews_sentiment.complaints.length > 0 ? (
+                          lead.reviews_sentiment.complaints.map((item: string, i: number) => (
+                            <div key={i} className="flex gap-2 items-start text-xs pl-1">
+                              <span className="text-rose-500 font-bold shrink-0">&bull;</span>
+                              <span className="text-slate-700 dark:text-slate-300">{item}</span>
+                            </div>
+                          ))
+                        ) : (
+                          <p className="text-[11px] text-muted-foreground italic pl-1">No significant complaints reported.</p>
+                        )}
+                      </div>
+                    </div>
+                    
+                    {/* Praises */}
+                    <div className="space-y-2">
+                      <p className="text-[10px] uppercase font-bold text-emerald-500 tracking-wider flex items-center gap-1.5">
+                        <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                        Key Praises
+                      </p>
+                      <div className="space-y-2">
+                        {lead.reviews_sentiment.praises && lead.reviews_sentiment.praises.length > 0 ? (
+                          lead.reviews_sentiment.praises.map((item: string, i: number) => (
+                            <div key={i} className="flex gap-2 items-start text-xs pl-1">
+                              <span className="text-emerald-500 font-bold shrink-0">&bull;</span>
+                              <span className="text-slate-700 dark:text-slate-300">{item}</span>
+                            </div>
+                          ))
+                        ) : (
+                          <p className="text-[11px] text-muted-foreground italic pl-1">No feedback snippets found.</p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}

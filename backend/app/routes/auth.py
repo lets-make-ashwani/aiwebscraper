@@ -108,6 +108,16 @@ def update_settings(
         updates["company_name"] = settings_in.company_name
     if settings_in.company_branding is not None:
         updates["company_branding"] = settings_in.company_branding
+    if settings_in.google_sheets_webhook_url is not None:
+        updates["google_sheets_webhook_url"] = settings_in.google_sheets_webhook_url
+    if settings_in.whatsapp_delay_min is not None:
+        updates["whatsapp_delay_min"] = settings_in.whatsapp_delay_min
+    if settings_in.whatsapp_delay_max is not None:
+        updates["whatsapp_delay_max"] = settings_in.whatsapp_delay_max
+    if settings_in.whatsapp_daily_limit is not None:
+        updates["whatsapp_daily_limit"] = settings_in.whatsapp_daily_limit
+    if settings_in.custom_system_prompt is not None:
+        updates["custom_system_prompt"] = settings_in.custom_system_prompt
         
     if updates:
         updates["updated_at"] = datetime.utcnow()

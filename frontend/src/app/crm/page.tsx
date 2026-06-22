@@ -26,6 +26,47 @@ export default function CRMPipeline() {
   const [searchParam, setSearchParam] = useState<string | null>(null);
   const [activeMobileCol, setActiveMobileCol] = useState("New");
 
+  // Checklist mode for campaign creation
+  const [checklistMode, setChecklistMode] = useState(false);
+  const [selectedLeads, setSelectedLeads] = useState<number[]>([]);
+  const [campaignModalOpen, setCampaignModalOpen] = useState(false);
+  const [campaignName, setCampaignName] = useState("");
+  const [campaignChannel, setCampaignChannel] = useState("whatsapp");
+  const [creatingCampaign, setCreatingCampaign] = useState(false);
+
+  const toggleSelectLead = (leadId: number) => {
+    setSelectedLeads(prev => 
+      prev.includes(leadId) ? prev.filter(id => id !== leadId) : [...prev, leadId]
+    );
+  };
+
+  const handleLaunchCampaign = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!campaignName) return;
+    setCreatingCampaign(true);
+    try {
+      await api.createCampaign({
+        name: campaignName,
+        outreach_channel: campaignChannel,
+        lead_ids: selectedLeads
+      });
+      window.location.href = "/campaigns";
+    } catch (err) {
+      console.error(err);
+      alert("Failed to launch campaign.");
+    } finally {
+      setCreatingCampaign(false);
+    }
+  };
+
+  const handleCardClick = (lead: any) => {
+    if (checklistMode) {
+      toggleSelectLead(lead.id);
+    } else {
+      openEditDrawer(lead);
+    }
+  };
+
   useEffect(() => {
     if (typeof window !== "undefined") {
       const params = new URLSearchParams(window.location.search);
@@ -195,6 +236,28 @@ export default function CRMPipeline() {
               Drag-and-manage local leads. Update statuses, track call notes, and schedule follow-ups.
             </p>
           </div>
+
+          <div className="flex gap-2">
+            <button
+              onClick={() => {
+                setChecklistMode(!checklistMode);
+                setSelectedLeads([]);
+              }}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all border cursor-pointer \${
+                checklistMode
+                  ? "bg-indigo-600 border-indigo-600 text-white"
+                  : "bg-secondary/60 hover:bg-secondary border-border text-foreground"
+              }`}
+            >
+              {checklistMode ? "Disable Campaign Mode" : "Bulk Campaign Mode"}
+            </button>
+            <Link
+              href="/campaigns"
+              className="px-4 py-2 rounded-xl text-xs font-bold bg-secondary/60 hover:bg-secondary border border-border text-foreground flex items-center gap-1.5"
+            >
+              View Campaigns
+            </Link>
+          </div>
         </div>
 
         {(filterParam || categoryParam || searchParam) && (
@@ -272,14 +335,26 @@ export default function CRMPipeline() {
                 (leadsByStatus[activeMobileCol] || []).map((lead) => (
                   <div 
                     key={lead.id}
-                    className="glass-card rounded-xl p-4 border border-border hover:shadow-md transition-all cursor-pointer relative group"
-                    onClick={() => openEditDrawer(lead)}
+                    className={`glass-card rounded-xl p-4 border transition-all cursor-pointer relative group \${
+                      selectedLeads.includes(lead.id) ? "border-indigo-500 bg-indigo-500/5" : "border-border"
+                    } hover:shadow-md`}
+                    onClick={() => handleCardClick(lead)}
                   >
                     <div className="space-y-2">
                       <div className="flex justify-between items-start gap-2">
-                        <h4 className="font-bold text-sm text-slate-800 dark:text-slate-200 line-clamp-1 truncate group-hover:text-primary">
-                          {lead.name}
-                        </h4>
+                        <div className="flex items-center gap-2 max-w-[80%]">
+                          {checklistMode && (
+                            <input
+                              type="checkbox"
+                              checked={selectedLeads.includes(lead.id)}
+                              onChange={() => {}}
+                              className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 shrink-0 cursor-pointer"
+                            />
+                          )}
+                          <h4 className="font-bold text-sm text-slate-800 dark:text-slate-200 line-clamp-1 truncate group-hover:text-primary">
+                            {lead.name}
+                          </h4>
+                        </div>
                         <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full uppercase shrink-0 ${
                           lead.lead_score_category?.startsWith("Hot") 
                             ? "glow-badge-hot" 
@@ -419,14 +494,26 @@ export default function CRMPipeline() {
                       columnLeads.map((lead) => (
                         <div 
                           key={lead.id}
-                          className="glass-card rounded-xl p-4 border border-border hover:shadow-md transition-all cursor-pointer relative group"
-                          onClick={() => openEditDrawer(lead)}
+                          className={`glass-card rounded-xl p-4 border transition-all cursor-pointer relative group \${
+                            selectedLeads.includes(lead.id) ? "border-indigo-500 bg-indigo-500/5" : "border-border"
+                          } hover:shadow-md`}
+                          onClick={() => handleCardClick(lead)}
                         >
                           <div className="space-y-2">
                             <div className="flex justify-between items-start gap-2">
-                              <h4 className="font-bold text-sm text-slate-800 dark:text-slate-200 line-clamp-1 truncate group-hover:text-primary">
-                                {lead.name}
-                              </h4>
+                              <div className="flex items-center gap-2 max-w-[80%]">
+                                {checklistMode && (
+                                  <input
+                                    type="checkbox"
+                                    checked={selectedLeads.includes(lead.id)}
+                                    onChange={() => {}}
+                                    className="h-4 w-4 rounded border-gray-300 text-indigo-600 focus:ring-indigo-500 shrink-0 cursor-pointer"
+                                  />
+                                )}
+                                <h4 className="font-bold text-sm text-slate-800 dark:text-slate-200 line-clamp-1 truncate group-hover:text-primary">
+                                  {lead.name}
+                                </h4>
+                              </div>
                               <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full uppercase shrink-0 ${
                                 lead.lead_score_category?.startsWith("Hot") 
                                   ? "glow-badge-hot" 
@@ -682,6 +769,93 @@ export default function CRMPipeline() {
                     </>
                   )}
                 </button>
+              </form>
+            </div>
+          </div>
+        )}
+
+        {/* Floating Campaign Bar */}
+        {checklistMode && selectedLeads.length > 0 && (
+          <div className="fixed bottom-6 left-1/2 transform -translate-x-1/2 z-40 bg-slate-900 border border-indigo-500/30 text-white py-3.5 px-6 rounded-2xl flex items-center gap-6 shadow-2xl shadow-indigo-500/10 animate-in fade-in slide-in-from-bottom-4">
+            <span className="text-xs font-bold text-slate-300">
+              <strong className="text-indigo-400">{selectedLeads.length}</strong> leads selected for campaign
+            </span>
+            <div className="flex gap-2">
+              <button
+                type="button"
+                onClick={() => setCampaignModalOpen(true)}
+                className="px-4 py-1.5 rounded-lg text-xs font-bold bg-indigo-600 hover:bg-indigo-500 transition-colors cursor-pointer"
+              >
+                Create Campaign
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelectedLeads([])}
+                className="px-3 py-1.5 rounded-lg text-xs font-bold hover:bg-slate-800 text-slate-400 transition-colors cursor-pointer"
+              >
+                Clear
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Campaign Settings Launch Modal */}
+        {campaignModalOpen && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div className="fixed inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setCampaignModalOpen(false)}></div>
+            <div className="relative w-full max-w-md bg-background border border-border rounded-2xl p-6 shadow-2xl z-50 space-y-6">
+              <div>
+                <h3 className="font-extrabold text-lg">Create Outreach Campaign</h3>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  Launch a messaging campaign for the {selectedLeads.length} selected leads.
+                </p>
+              </div>
+
+              <form onSubmit={handleLaunchCampaign} className="space-y-4">
+                <div className="space-y-2">
+                  <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                    Campaign Name
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={campaignName}
+                    onChange={(e) => setCampaignName(e.target.value)}
+                    placeholder="e.g. WhatsApp Pitch for CA Locals"
+                    className="block w-full rounded-xl border border-border bg-slate-900/10 dark:bg-slate-950/60 py-2.5 px-4 text-sm outline-none transition-all focus:border-primary"
+                  />
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-xs font-bold uppercase tracking-wider text-muted-foreground">
+                    Outreach Channel
+                  </label>
+                  <select
+                    value={campaignChannel}
+                    onChange={(e) => setCampaignChannel(e.target.value)}
+                    className="block w-full rounded-xl border border-border bg-background py-2.5 px-3 text-sm outline-none focus:border-primary"
+                  >
+                    <option value="whatsapp">WhatsApp Outreach (Playwright Session)</option>
+                    <option value="email">Email Outreach (Simulated SMTP)</option>
+                  </select>
+                </div>
+
+                <div className="flex gap-3 pt-4 border-t border-border">
+                  <button
+                    type="button"
+                    onClick={() => setCampaignModalOpen(false)}
+                    className="flex-1 py-2.5 rounded-xl border border-border text-xs font-bold hover:bg-secondary cursor-pointer"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={creatingCampaign || !campaignName}
+                    className="flex-1 py-2.5 rounded-xl bg-primary hover:bg-indigo-500 text-white text-xs font-bold transition-colors disabled:opacity-50 cursor-pointer"
+                  >
+                    {creatingCampaign ? "Launching..." : "Launch Campaign"}
+                  </button>
+                </div>
               </form>
             </div>
           </div>

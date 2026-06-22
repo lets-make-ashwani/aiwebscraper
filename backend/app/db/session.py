@@ -54,6 +54,9 @@ try:
     db.search_histories.create_index("user_id")
     db.leads.create_index("search_history_id")
     db.leads.create_index("name")
+    db.campaigns.create_index("user_id")
+    db.campaign_queues.create_index("campaign_id")
+    db.campaign_queues.create_index("status")
     logger.info("MongoDB indexes initialized successfully!")
 except Exception as e:
     logger.error(f"Error creating MongoDB indexes: {e}")

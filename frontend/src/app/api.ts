@@ -116,6 +116,18 @@ export const api = {
   validateGeminiKey: (apiKey: string) => request("/settings/validate-gemini-key", { method: "POST", body: JSON.stringify({ api_key: apiKey }) }),
   updateBranding: (data: any) => request("/settings/branding", { method: "PUT", body: JSON.stringify(data) }),
 
+  // Campaigns
+  getCampaigns: () => request("/campaigns/"),
+  getCampaign: (id: number) => request(`/campaigns/${id}`),
+  getCampaignQueue: (id: number) => request(`/campaigns/${id}/queue`),
+  createCampaign: (data: any) => request("/campaigns/", { method: "POST", body: JSON.stringify(data) }),
+  pauseCampaign: (id: number) => request(`/campaigns/${id}/pause`, { method: "POST" }),
+  resumeCampaign: (id: number) => request(`/campaigns/${id}/resume`, { method: "POST" }),
+  deleteCampaign: (id: number) => request(`/campaigns/${id}`, { method: "DELETE" }),
+  getWhatsAppStatus: () => request("/campaigns/whatsapp/status"),
+  pairWhatsApp: () => request("/campaigns/whatsapp/pair", { method: "POST" }),
+  disconnectWhatsApp: () => request("/campaigns/whatsapp/disconnect", { method: "POST" }),
+
   // Exports
   exportCSV: async (historyId?: number) => {
     const blob = await request(`/export/csv${historyId ? `?search_history_id=${historyId}` : ""}`);

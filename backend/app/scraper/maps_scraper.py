@@ -93,7 +93,12 @@ def generate_mock_leads(query: str, location: str, min_rating: float, min_review
             "website": website or None,
             "phone": t["phone"] or None,
             "address": f"Street No. {i+1}, Commercial Market Area, {city}, India",
-            "google_maps_url": f"https://www.google.com/maps/search/?api=1&query={name.replace(' ', '+')}+{city.replace(' ', '+')}"
+            "google_maps_url": f"https://www.google.com/maps/search/?api=1&query={name.replace(' ', '+')}+{city.replace(' ', '+')}",
+            "scraped_reviews": [
+                f"Love the services here! Best {t['category']} in {city}.",
+                "Staff was extremely professional, but booking a slot took some time.",
+                "Highly recommended, very hygienic and pleasant experience!"
+            ]
         })
         
     # If filtered out everything, return at least 3 leads
@@ -111,7 +116,11 @@ def generate_mock_leads(query: str, location: str, min_rating: float, min_review
                 "website": website or None,
                 "phone": t["phone"] or None,
                 "address": f"Market Rd, {city}, India",
-                "google_maps_url": f"https://www.google.com/maps/search/?api=1&query={name.replace(' ', '+')}+{city.replace(' ', '+')}"
+                "google_maps_url": f"https://www.google.com/maps/search/?api=1&query={name.replace(' ', '+')}+{city.replace(' ', '+')}",
+                "scraped_reviews": [
+                    f"Good {t['category']} with helpful staff.",
+                    "Pricing was decent, but they should really support online reservations."
+                ]
             })
             
     return leads
@@ -126,7 +135,7 @@ async def generate_mock_leads_ai(query: str, location: str, min_rating: float, m
     Requirements:
     1. The leads MUST match the query intent (e.g. if the query mentions "school", generate school records; if "dentist", generate dentist records).
     2. Since the query is: "{query}", if the user requested businesses without a website, make sure at least 3 of the generated leads have no website (set "website" to null).
-    3. Generate realistic local business names, actual street addresses in "{location}", valid-looking phone numbers, ratings, review counts, and category tags.
+    3. Generate realistic local business names, actual street addresses in "{location}", valid-looking phone numbers, ratings, review counts, category tags, and 2-3 sample customer review sentences in a list.
     4. Provide the response strictly in JSON format matching this array structure:
     [
       {{
@@ -137,7 +146,8 @@ async def generate_mock_leads_ai(query: str, location: str, min_rating: float, m
         "rating": 4.2,
         "reviews_count": 85,
         "category": "Specific Business Category",
-        "google_maps_url": "https://google.com/maps/..."
+        "google_maps_url": "https://google.com/maps/...",
+        "scraped_reviews": ["Great services, highly recommend!", "Scheduling an appointment was a bit slow."]
       }}
     ]
     Ensure the JSON is completely valid. Do not wrap the JSON in markdown code blocks.
@@ -181,7 +191,8 @@ async def generate_mock_leads_ai(query: str, location: str, min_rating: float, m
                         "rating": rating,
                         "reviews_count": reviews,
                         "category": l.get("category") or "Business",
-                        "google_maps_url": l.get("google_maps_url") or f"https://www.google.com/maps/search/?api=1&query={l.get('name', '').replace(' ', '+')}"
+                        "google_maps_url": l.get("google_maps_url") or f"https://www.google.com/maps/search/?api=1&query={l.get('name', '').replace(' ', '+')}",
+                        "scraped_reviews": l.get("scraped_reviews", [])
                     })
             if validated_leads:
                 return validated_leads
@@ -444,6 +455,33 @@ async def _run_playwright_scrape(search_query: str, min_rating: float, min_revie
                             if phone_val:
                                 phone_val = phone_val.replace("Phone:", "").strip()
 
+                    # Extract sample reviews from maps page
+                    scraped_reviews = []
+                    try:
+                        # Find tab containing Reviews
+                        reviews_tab = await page.query_selector('button[role="tab"]:has-text("Reviews")')
+                        if not reviews_tab:
+                            reviews_tab = await page.query_selector('button[aria-label*="Reviews"]')
+                        
+                        if reviews_tab:
+                            await page.evaluate("el => el.click()", reviews_tab)
+                            await page.wait_for_timeout(1000)
+                            
+                            # Grab review text elements
+                            review_els = await page.query_selector_all('.wiw7g, .My579, .rsqaif')
+                            for r_el in review_els[:5]:
+                                r_text = await r_el.inner_text()
+                                if r_text and len(r_text.strip()) > 10:
+                                    scraped_reviews.append(r_text.strip())
+                                    
+                            # Switch back to Overview
+                            overview_tab = await page.query_selector('button[role="tab"]:has-text("Overview")')
+                            if overview_tab:
+                                await page.evaluate("el => el.click()", overview_tab)
+                                await page.wait_for_timeout(500)
+                    except Exception as rev_err:
+                        logger.warning(f"Failed to scrape reviews for {name}: {rev_err}")
+
                     # Filters
                     rating_val = rating_val or 0.0
                     if rating_val < min_rating or reviews_val < min_reviews:
@@ -457,7 +495,8 @@ async def _run_playwright_scrape(search_query: str, min_rating: float, min_revie
                         "rating": rating_val,
                         "reviews_count": reviews_val,
                         "category": category_val,
-                        "google_maps_url": maps_link
+                        "google_maps_url": maps_link,
+                        "scraped_reviews": scraped_reviews
                     })
                 except Exception as e:
                     logger.warning(f"Error parsing specific card: {e}")
@@ -569,6 +608,7 @@ async def scrape_google_maps(
             "category": l_data.get("category"),
             "google_maps_url": l_data.get("google_maps_url"),
             "website_type": website_type,
+            "scraped_reviews": l_data.get("scraped_reviews", []),
             "audit_status": "pending" if web_url else "completed", # No website -> audit is instant
             "status": "New",
             "created_at": datetime.utcnow()

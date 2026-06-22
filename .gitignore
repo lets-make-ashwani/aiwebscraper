@@ -1,0 +1,66 @@
+# Dependency directories
+node_modules/
+jspm_packages/
+web_modules/
+
+# Python Virtual Environments
+venv/
+.venv/
+env/
+ENV/
+pyvenv.cfg
+.python-version
+
+# Python Cache & Compiled Files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+
+# Next.js Build Output
+.next/
+out/
+build/
+dist/
+
+# Local databases & DB journals
+*.db
+*.db-journal
+*.sqlite3
+leadforge.db
+leadforge_app.db
+
+# WhatsApp Session Files (saved locally)
+whatsapp_sessions/
+
+# Screenshots & Scraped Assets
+*.png
+google_maps_screenshot.png
+after_accept_screenshot.png
+
+# Environment Variables & Secrets
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.env
+
+# IDEs and Editors
+.vscode/
+.idea/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.swp
+
+# OS System Files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+.DS_Store

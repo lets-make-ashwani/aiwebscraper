@@ -21,12 +21,22 @@ class UserSettingsUpdate(BaseModel):
     gemini_api_key: Optional[str] = None
     company_name: Optional[str] = None
     company_branding: Optional[str] = None
+    google_sheets_webhook_url: Optional[str] = None
+    whatsapp_delay_min: Optional[int] = None
+    whatsapp_delay_max: Optional[int] = None
+    whatsapp_daily_limit: Optional[int] = None
+    custom_system_prompt: Optional[str] = None
 
 class UserResponse(UserBase):
     id: int
     groq_api_key: Optional[str] = None
     gemini_api_key: Optional[str] = None
     company_branding: Optional[str] = None
+    google_sheets_webhook_url: Optional[str] = None
+    whatsapp_delay_min: Optional[int] = None
+    whatsapp_delay_max: Optional[int] = None
+    whatsapp_daily_limit: Optional[int] = None
+    custom_system_prompt: Optional[str] = None
     created_at: datetime
     
     class Config:
@@ -76,6 +86,8 @@ class WebsiteAuditResponse(BaseModel):
     social_media_links: Optional[str]
     has_booking_system: bool
     audit_report: Optional[str]
+    emails: Optional[str] = None
+    phones: Optional[str] = None
     created_at: datetime
 
     class Config:
@@ -101,6 +113,7 @@ class LeadResponse(BaseModel):
     notes: Optional[str]
     tags: Optional[str]
     follow_up_date: Optional[datetime]
+    reviews_sentiment: Optional[dict] = None
     created_at: datetime
 
     class Config:
@@ -153,3 +166,36 @@ class DashboardStats(BaseModel):
     leads_per_day: List[dict] # [{"date": "2026-05-28", "count": 12}]
     leads_by_industry: List[dict] # [{"industry": "Dentist", "count": 15}]
     score_distribution: List[dict] # [{"category": "Hot", "count": 5}]
+
+# Campaign Schemas
+class CampaignCreate(BaseModel):
+    name: str
+    outreach_channel: str = "whatsapp" # whatsapp, email
+    lead_ids: List[int]
+
+class CampaignResponse(BaseModel):
+    id: int
+    name: str
+    user_id: int
+    status: str
+    outreach_channel: str
+    leads_count: int
+    sent_count: int
+    failed_count: int
+    created_at: datetime
+    updated_at: datetime
+
+    class Config:
+        from_attributes = True
+
+class CampaignQueueResponse(BaseModel):
+    id: int
+    campaign_id: int
+    lead_id: int
+    status: str
+    error_message: Optional[str] = None
+    sent_at: Optional[datetime] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True

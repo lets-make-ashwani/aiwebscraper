@@ -14,6 +14,11 @@ class User:
         self.groq_api_key = self._data.get("groq_api_key")
         self.gemini_api_key = self._data.get("gemini_api_key")
         self.company_branding = self._data.get("company_branding")
+        self.google_sheets_webhook_url = self._data.get("google_sheets_webhook_url")
+        self.whatsapp_delay_min = self._data.get("whatsapp_delay_min", 15)
+        self.whatsapp_delay_max = self._data.get("whatsapp_delay_max", 45)
+        self.whatsapp_daily_limit = self._data.get("whatsapp_daily_limit", 50)
+        self.custom_system_prompt = self._data.get("custom_system_prompt")
         self.created_at = self._data.get("created_at") or datetime.utcnow()
         self.updated_at = self._data.get("updated_at") or datetime.utcnow()
 
@@ -70,6 +75,8 @@ class WebsiteAudit:
         self.social_media_links = self._data.get("social_media_links")
         self.has_booking_system = self._data.get("has_booking_system", False)
         self.audit_report = self._data.get("audit_report")
+        self.emails = self._data.get("emails")
+        self.phones = self._data.get("phones")
         self.created_at = self._data.get("created_at") or datetime.utcnow()
 
     def to_dict(self):
@@ -126,6 +133,8 @@ class Lead:
         self.status = self._data.get("status", "New")
         self.notes = self._data.get("notes")
         self.tags = self._data.get("tags")
+        self.scraped_reviews = self._data.get("scraped_reviews", [])
+        self.reviews_sentiment = self._data.get("reviews_sentiment")
         
         self.follow_up_date = self._data.get("follow_up_date")
         if isinstance(self.follow_up_date, str):
@@ -174,6 +183,53 @@ class Proposal:
         self.lead_id = self._data.get("lead_id")
         self.format = self._data.get("format")
         self.proposal_text = self._data.get("proposal_text")
+        self.created_at = self._data.get("created_at") or datetime.utcnow()
+
+    def to_dict(self):
+        d = {k: v for k, v in self.__dict__.items() if not k.startswith("_")}
+        if "id" in d:
+            if d["id"] is not None:
+                d["_id"] = d.pop("id")
+            else:
+                d.pop("id")
+        return d
+
+class Campaign:
+    def __init__(self, data: dict = None, **kwargs):
+        self._data = data or {}
+        self._data.update(kwargs)
+        
+        self.id = self._data.get("id") or self._data.get("_id")
+        self.name = self._data.get("name")
+        self.user_id = self._data.get("user_id")
+        self.status = self._data.get("status", "draft") # draft, running, paused, completed, failed
+        self.outreach_channel = self._data.get("outreach_channel", "whatsapp")
+        self.leads_count = self._data.get("leads_count", 0)
+        self.sent_count = self._data.get("sent_count", 0)
+        self.failed_count = self._data.get("failed_count", 0)
+        self.created_at = self._data.get("created_at") or datetime.utcnow()
+        self.updated_at = self._data.get("updated_at") or datetime.utcnow()
+
+    def to_dict(self):
+        d = {k: v for k, v in self.__dict__.items() if not k.startswith("_")}
+        if "id" in d:
+            if d["id"] is not None:
+                d["_id"] = d.pop("id")
+            else:
+                d.pop("id")
+        return d
+
+class CampaignQueue:
+    def __init__(self, data: dict = None, **kwargs):
+        self._data = data or {}
+        self._data.update(kwargs)
+        
+        self.id = self._data.get("id") or self._data.get("_id")
+        self.campaign_id = self._data.get("campaign_id")
+        self.lead_id = self._data.get("lead_id")
+        self.status = self._data.get("status", "pending") # pending, sending, sent, failed
+        self.error_message = self._data.get("error_message")
+        self.sent_at = self._data.get("sent_at")
         self.created_at = self._data.get("created_at") or datetime.utcnow()
 
     def to_dict(self):
